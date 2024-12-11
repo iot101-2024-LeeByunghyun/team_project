@@ -12,17 +12,24 @@ String              user_config_html = ""
 char                mqttServer[100];
  
 // 핀 설정
+// RFID 핀 설정
 #define RST_PIN 22 // Reset 핀
 #define SS_PIN 21  // SDA 핀
-
+// 초음파 센서 핀 설정
 const int trigPin = 4; // Trig 핀
 const int echoPin = 5; // Echo 핀
+// 서보모터 핀 설정
 const int servoPin = 2; // 서보모터 핀
+// 버튼 핀 설정
+const int buttonPin = 15; // 버튼 핀
 
+// 파라미터 설정
 float dist = 300.0; // 초음파 센서 거리
 float distanceValue;
-int angle;
-int currentAngle = 0;
+int angle;  // 서보모터 각도
+int currentAngle = 0;   // 현재 서보모터 각도
+bool buttonPressed = false; // 버튼 눌림 상태
+bool lastButtonPressed = false; // 이전 버튼 상태
 
 MFRC522 rfid(SS_PIN, RST_PIN); // RFID 객체 생성
 
@@ -39,7 +46,7 @@ unsigned long       lastPublished = - interval;
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 void msgCB(char* topic, byte* payload, unsigned int length); // message Callback
-void pubStatus(float dist);
+void pubStatus(float dist, bool buttonPressed);
 Servo myServo;
 
 
@@ -51,7 +58,7 @@ void loop() {
     unsigned long currentMillis = millis();
     if(currentMillis - lastPublished >= interval) {
         lastPublished = currentMillis;
-        pubStatus(dist);
+        pubStatus(dist, buttonPressed);
     }
 
     // 새로운 태그가 감지되었는지 확인
@@ -96,6 +103,15 @@ void loop() {
     duration = pulseIn(echoPin, HIGH);
     dist = duration * 0.034 / 2;
 
+    // 버튼 상태 확인
+    buttonPressed = (digitalRead(buttonPin) == HIGH); // HIGH가 눌림 상태
+
+    // 상태 변경이 있으면 즉시 퍼블리시
+    if (buttonPressed != lastButtonPressed) {
+        pubStatus(dist, buttonPressed);
+        lastButtonPressed = buttonPressed;
+    }
+
     delay(50); // 루프 딜레이
 }
 
@@ -108,6 +124,7 @@ void setup() {
     // 핀 모드 설정
     pinMode(trigPin, OUTPUT);
     pinMode(echoPin, INPUT);
+    pinMode(buttonPin, INPUT_PULLUP);
 
     // 서보모터 초기화
     myServo.attach(servoPin);
@@ -145,14 +162,16 @@ void setup() {
         }
     }
  
-    client.subscribe("id/yourname/parking/tag");
-    client.subscribe("id/yourname/parking/distance");
-    client.subscribe("id/yourname/servo/control");
+    client.subscribe("id/semicon/yard/RFID/tag");
+    client.subscribe("id/semicon/yard/ultrasonic/distance");
+    client.subscribe("id/semicon/door/servo/control");
+    client.subscribe("id/semicon/door/button/info");
 }
 
-void pubStatus(float dist) {
+void pubStatus(float dist, bool buttonState) {
     char tag[10];
     char distance[10];
+    char buttonMsg[10];
     if (tagPresent) {
         sprintf(tag, "tag");
     } else {
@@ -164,8 +183,15 @@ void pubStatus(float dist) {
     } else {
         sprintf(distance, "600.0");       // 유효하지 않은 값
     }
-    client.publish("id/yourname/parking/tag", tag);
-    client.publish("id/yourname/parking/distance", distance);
+
+    if (buttonState) {
+        sprintf(buttonMsg, "press");
+    } else {
+        sprintf(buttonMsg, "release");
+    }
+    client.publish("id/semicon/yard/RFID/tag", tag);
+    client.publish("id/semicon/yard/ultrasonic/distance", distance);
+    client.publish("id/semicon/door/button/info", buttonMsg);
 }
 
 void msgCB(char* topic, byte* payload, unsigned int length) {
@@ -179,23 +205,23 @@ void msgCB(char* topic, byte* payload, unsigned int length) {
     
 
     // 수신된 토픽에 따라 동작 처리
-    if (!strcmp(topic, "id/yourname/servo/control")) {
+    if (!strcmp(topic, "id/semicon/door/servo/control")) {
         if (!strcmp(msgBuffer, "on")) {
-            if (currentAngle != 90) { // 현재 각도가 90도가 아니라면 이동
+            if (currentAngle != 90) { // 현재 각도가 180도가 아니라면 이동
                 for (int angle = currentAngle; angle <= 90; angle++) {
                     myServo.write(angle); // 각도 변경
                     delay(10);            // 각도 변경 간 대기 시간(속도 제어)
                 }
-                currentAngle = 90; // 현재 각도를 90도로 설정
+                currentAngle = 90; // 현재 각도를 180도로 설정
 
             }
         } else if (!strcmp(msgBuffer, "off")) {
-            if (currentAngle != 0) { // 현재 각도가 0도가 아니라면 이동
+            if (currentAngle != 0) { // 현재 각도가 90도가 아니라면 이동
                 for (int angle = currentAngle; angle >= 0; angle--) {
                     myServo.write(angle); // 각도 변경
                     delay(10);            // 각도 변경 간 대기 시간(속도 제어)
                 }
-                currentAngle = 0; // 현재 각도를 0도로 설정
+                currentAngle = 0; // 현재 각도를 90도로 설정
             }
         }
     }

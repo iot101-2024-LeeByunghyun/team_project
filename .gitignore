@@ -1,3 +1,5 @@
 .pio
 .vscode
 README.md
+GPIO 포트 번호.txt
+python/server.py
